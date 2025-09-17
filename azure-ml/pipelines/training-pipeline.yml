@@ -1,0 +1,232 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
+type: pipeline
+
+# Configurações básicas
+display_name: credit-risk-training-pipeline
+description: "Pipeline completo de treinamento para predição de risco de crédito"
+experiment_name: credit-risk-pipeline
+
+# Configuração padrão
+defaults:
+  compute: azureml:cpu-cluster
+  datastore: azureml:workspaceblobstore
+
+# Inputs do pipeline
+inputs:
+  pipeline_job_training_input:
+    type: uri_file
+    path: azureml://datastores/workspaceblobstore/paths/data/credit_risk.csv
+  model_type:
+    type: string
+    default: "xgboost"
+
+# Outputs do pipeline  
+outputs:
+  pipeline_job_trained_model:
+    mode: upload
+    
+# Definição dos jobs/steps
+jobs:
+  
+  # Step 1: Data Preparation
+  data_prep_job:
+    type: command
+    display_name: "Data Preparation"
+    description: "Preparação e validação dos dados"
+    
+    inputs:
+      input_data: ${{parent.inputs.pipeline_job_training_input}}
+      
+    outputs:
+      prepared_data:
+        mode: upload
+        
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04:latest
+      conda_file: ../environments/train-env.yml
+      
+    code: ../../src
+    command: >-
+      python -c "
+      import pandas as pd
+      import os
+      print('Data preparation step...')
+      df = pd.read_csv('${{inputs.input_data}}')
+      print(f'Loaded data: {df.shape}')
+      os.makedirs('${{outputs.prepared_data}}', exist_ok=True)
+      df.to_csv('${{outputs.prepared_data}}/processed_data.csv', index=False)
+      print('Data preparation completed!')
+      "
+      
+    resources:
+      instance_count: 1
+      
+  # Step 2: Model Training
+  train_job:
+    type: command
+    display_name: "Model Training"
+    description: "Treinamento do modelo de ML"
+    
+    inputs:
+      training_data: ${{parent.jobs.data_prep_job.outputs.prepared_data}}
+      model_type: ${{parent.inputs.model_type}}
+      
+    outputs:
+      model_output:
+        mode: upload
+        
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04:latest  
+      conda_file: ../environments/train-env.yml
+      
+    code: ../../src
+    command: >-
+      python train.py
+      --data ${{inputs.training_data}}/processed_data.csv
+      --model ${{inputs.model_type}}
+      --output-dir ${{outputs.model_output}}
+      
+    resources:
+      instance_count: 1
+      
+  # Step 3: Model Evaluation
+  eval_job:
+    type: command
+    display_name: "Model Evaluation"
+    description: "Avaliação e validação do modelo"
+    
+    inputs:
+      model_input: ${{parent.jobs.train_job.outputs.model_output}}
+      test_data: ${{parent.jobs.data_prep_job.outputs.prepared_data}}
+      
+    outputs:
+      evaluation_output:
+        mode: upload
+        
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04:latest
+      conda_file: ../environments/train-env.yml
+      
+    code: ../../src
+    command: >-
+      python -c "
+      import pandas as pd
+      import joblib
+      import json
+      import os
+      from sklearn.metrics import accuracy_score, roc_auc_score
+      from sklearn.model_selection import train_test_split
+      
+      print('Model evaluation step...')
+      
+      # Load data
+      df = pd.read_csv('${{inputs.test_data}}/processed_data.csv')
+      
+      # Basic preprocessing (simplified)
+      if 'default' in df.columns:
+          X = df.drop('default', axis=1).select_dtypes(include=['number'])
+          y = df['default']
+          X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+      
+          # Load model
+          model = joblib.load('${{inputs.model_input}}/xgboost_model.pkl')
+          
+          # Evaluate
+          y_pred = model.predict(X_test)
+          accuracy = accuracy_score(y_test, y_pred)
+          
+          # Save metrics
+          os.makedirs('${{outputs.evaluation_output}}', exist_ok=True)
+          metrics = {'accuracy': accuracy}
+          
+          with open('${{outputs.evaluation_output}}/metrics.json', 'w') as f:
+              json.dump(metrics, f)
+          
+          print(f'Model accuracy: {accuracy:.4f}')
+          print('Evaluation completed!')
+      else:
+          print('No target column found, skipping evaluation')
+      "
+      
+    resources:
+      instance_count: 1
+
+  # Step 4: Model Registration (condicional)
+  register_job:
+    type: command
+    display_name: "Model Registration"
+    description: "Registro do modelo se passou na validação"
+    
+    inputs:
+      model_input: ${{parent.jobs.train_job.outputs.model_output}}
+      eval_input: ${{parent.jobs.eval_job.outputs.evaluation_output}}
+      
+    outputs:
+      registration_output: ${{parent.outputs.pipeline_job_trained_model}}
+      
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04:latest
+      conda_file: ../environments/train-env.yml
+      
+    code: ../../src
+    command: >-
+      python -c "
+      import json
+      import shutil
+      import os
+      
+      print('Model registration step...')
+      
+      # Check evaluation metrics
+      try:
+          with open('${{inputs.eval_input}}/metrics.json', 'r') as f:
+              metrics = json.load(f)
+          
+          accuracy = metrics.get('accuracy', 0)
+          threshold = 0.7
+          
+          if accuracy >= threshold:
+              print(f'Model passed validation (accuracy: {accuracy:.4f} >= {threshold})')
+              
+              # Copy model to output
+              os.makedirs('${{outputs.registration_output}}', exist_ok=True)
+              
+              # Copy all files from model output
+              for file in os.listdir('${{inputs.model_input}}'):
+                  src = os.path.join('${{inputs.model_input}}', file)
+                  dst = os.path.join('${{outputs.registration_output}}', file)
+                  if os.path.isfile(src):
+                      shutil.copy2(src, dst)
+              
+              # Save registration info
+              reg_info = {
+                  'model_name': 'credit-risk-xgboost',
+                  'version': '1.0',
+                  'accuracy': accuracy,
+                  'status': 'registered'
+              }
+              
+              with open('${{outputs.registration_output}}/registration_info.json', 'w') as f:
+                  json.dump(reg_info, f, indent=2)
+              
+              print('Model registered successfully!')
+          else:
+              print(f'Model failed validation (accuracy: {accuracy:.4f} < {threshold})')
+              
+      except Exception as e:
+          print(f'Error in registration: {e}')
+      "
+      
+    resources:
+      instance_count: 1
+
+# Tags do pipeline
+tags:
+  project: "bootcamp-microsoft-azure"
+  use_case: "credit_risk"
+  pipeline_type: "training"
+  
+# Configurações adicionais
+settings:
+  default_compute: azureml:cpu-cluster
+  continue_on_step_failure: false

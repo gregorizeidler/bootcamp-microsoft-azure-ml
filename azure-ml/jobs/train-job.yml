@@ -1,0 +1,74 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+
+# Configurações básicas do job
+display_name: credit-risk-training
+description: "Treinamento do modelo de predição de risco de crédito para Bootcamp Microsoft Azure"
+experiment_name: credit-risk-prediction
+
+# Configuração do compute
+compute: azureml:cpu-cluster
+
+# Ambiente de execução
+environment: 
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04:latest
+  conda_file: ../environments/train-env.yml
+
+# Código fonte
+code: ../../src
+
+# Comando de execução
+command: >-
+  python train.py 
+  --data ${{inputs.training_data}}
+  --model ${{inputs.model_type}}
+  --test-size ${{inputs.test_size}}
+  --n-estimators ${{inputs.n_estimators}}
+  --max-depth ${{inputs.max_depth}}
+  --learning-rate ${{inputs.learning_rate}}
+  --output-dir ${{outputs.model_output}}
+
+# Inputs
+inputs:
+  training_data:
+    type: uri_file
+    path: azureml://datastores/workspaceblobstore/paths/data/credit_risk.csv
+    mode: ro_mount
+  model_type:
+    type: string
+    default: "xgboost"
+  test_size:
+    type: number
+    default: 0.2
+  n_estimators:
+    type: number
+    default: 100
+  max_depth:
+    type: number
+    default: 6
+  learning_rate:
+    type: number
+    default: 0.1
+
+# Outputs
+outputs:
+  model_output:
+    type: uri_folder
+    mode: rw_mount
+
+# Configurações adicionais
+tags:
+  model_type: "classification"
+  use_case: "credit_risk"
+  framework: "xgboost"
+  stage: "training"
+  
+# Configurações de recursos
+resources:
+  instance_count: 1
+  # Descomente e ajuste conforme necessário
+  # shm_size: "2g"
+
+# Configurações de retenção
+settings:
+  continue_on_step_failure: false

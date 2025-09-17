@@ -1,0 +1,70 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
+name: blue
+description: "Deployment XGBoost para predição de risco de crédito"
+
+# Endpoint de referência
+endpoint_name: credit-risk-endpoint
+
+# Modelo a ser deployado
+model: 
+  path: azureml://models/credit-risk-xgboost/versions/latest
+  # Alternativa: especificar versão específica
+  # name: credit-risk-xgboost
+  # version: 1
+
+# Configuração do ambiente
+environment:
+  image: mcr.microsoft.com/azureml/minimal-ubuntu20.04-py38-cpu-inference:latest
+  conda_file: ../environments/inference-env.yml
+
+# Script de inferência
+code_configuration:
+  code: ../../src
+  scoring_script: predict.py
+
+# Configurações de recursos
+instance_type: Standard_DS2_v2
+instance_count: 1
+
+# Configurações de escalonamento automático
+scale_settings:
+  type: default
+  
+# Configurações de request
+request_settings:
+  request_timeout_ms: 5000
+  max_concurrent_requests_per_instance: 1
+  max_queue_wait_ms: 1000
+
+# Configurações de ambiente
+environment_variables:
+  PYTHONPATH: "/var/azureml-app"
+  # Adicionar outras variáveis se necessário
+  # CUSTOM_MODEL_CONFIG: "production"
+
+# Configurações de recursos adicionais
+resource_requirements:
+  cpu: "0.5"
+  memory_in_gb: 2
+
+# Tags para organização
+tags:
+  deployment_type: "blue"
+  model_framework: "xgboost"
+  inference_type: "realtime"
+  version: "1.0"
+
+# Configurações de liveness e readiness probes
+liveness_probe:
+  initial_delay: 10
+  period: 10
+  timeout: 2
+  success_threshold: 1
+  failure_threshold: 30
+
+readiness_probe:
+  initial_delay: 10
+  period: 10
+  timeout: 2
+  success_threshold: 1
+  failure_threshold: 3

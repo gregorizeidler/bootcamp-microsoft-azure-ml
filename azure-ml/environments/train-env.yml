@@ -1,0 +1,30 @@
+name: bootcamp-azure-train-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip=22.3
+  - scikit-learn=1.1.3
+  - pandas=1.5.2
+  - numpy=1.23.5
+  - matplotlib=3.6.2
+  - seaborn=0.12.1
+  - jupyter=1.0.0
+  - joblib=1.2.0
+  - pip:
+    - mlflow==2.0.1
+    - xgboost==1.7.3
+    - azureml-core==1.47.0
+    - azureml-mlflow==1.47.0
+    - azureml-dataset-runtime==1.47.0
+    - azure-identity==1.12.0
+    - azure-keyvault-secrets==4.6.0
+    - plotly==5.11.0
+    - shap==0.41.0
+    - optuna==3.0.5
+    - pytest==7.2.0
+    - pytest-cov==4.0.0
+    - black==22.12.0
+    - flake8==6.0.0
+    - isort==5.11.4
